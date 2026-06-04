@@ -29,20 +29,31 @@ class RAGEngine:
         self._init_chroma()
 
     def _init_chroma(self):
-        persist_dir = os.getenv("CHROMA_PERSIST_DIR", "chroma_db")
-        project_root = Path(__file__).parent.parent
-        full_path = project_root / persist_dir
-
-        if full_path.exists():
-            client = chromadb.PersistentClient(path=str(full_path))
-            collections = client.list_collections()
-            if collections:
-                self.collection = client.get_collection(collections[0].name)
-                print(f"Vector store loaded: {collections[0].name} ({self.collection.count()} chunks)")
-            else:
-                print("WARNING: ChromaDB has no collections. Run ingest_data_groq.py")
-        else:
-            print(f"WARNING: Vector store not found at {full_path}")
+        # Try multiple possible paths
+        candidates = [
+            os.getenv("CHROMA_PERSIST_DIR", "chroma_db"),
+            "chroma_db",
+            "./chroma_db",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chroma_db"),
+            os.path.join(os.getcwd(), "chroma_db")
+        ]
+        
+        for persist_dir in candidates:
+            full_path = Path(persist_dir)
+            if full_path.exists():
+                try:
+                    client = chromadb.PersistentClient(path=str(full_path))
+                    collections = client.list_collections()
+                    if collections:
+                        self.collection = client.get_collection(collections[0].name)
+                        print(f"Vector store loaded: {full_path} ({self.collection.count()} chunks)")
+                        return
+                except Exception as e:
+                    print(f"Failed to load from {full_path}: {e}")
+                    continue
+        
+        print(f"WARNING: Vector store not found. Tried: {candidates}")
+        print(f"Current working directory: {os.getcwd()}")
 
     def _retrieve(self, query: str, k: int = 5) -> List[Dict]:
         if not self.collection:
