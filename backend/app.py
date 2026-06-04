@@ -62,12 +62,20 @@ class BookingRequest(BaseModel):
 
 @app.get("/health")
 async def health():
+    import os
+    from pathlib import Path
+    cwd = os.getcwd()
+    chroma_exists = Path("chroma_db").exists()
+    chroma_abs = Path("chroma_db").absolute()
     return {
         "status": "healthy",
         "candidate": os.getenv("CANDIDATE_NAME", "Vaibhav Pandey"),
         "persona": "Sam",
         "rag_ready": rag_engine.is_ready(),
-        "calendar_ready": calendar_manager.is_ready()
+        "calendar_ready": calendar_manager.is_ready(),
+        "cwd": cwd,
+        "chroma_exists": chroma_exists,
+        "chroma_path": str(chroma_abs)
     }
 
 @app.post("/chat", response_model=ChatResponse)
