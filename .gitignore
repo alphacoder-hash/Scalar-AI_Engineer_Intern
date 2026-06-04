@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+credentials.json
+token.pickle
+
+# Vector DB
+chroma_db/
+*.db
+
+# Logs
+*.log
+*.jsonl
+evals/call_logs.jsonl
+evals/metrics.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+
+# Data
+data/*.pdf
+data/*.docx
+data/resume.*
+
+# Temp
+temp/
+tmp/
+*.tmp

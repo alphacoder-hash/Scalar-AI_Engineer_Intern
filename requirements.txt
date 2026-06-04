@@ -1,0 +1,38 @@
+# Core
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+python-dotenv==1.0.0
+
+# AI/ML - Using Groq (Free) + Local Embeddings
+langchain==0.1.6
+langchain-openai==0.0.5
+langchain-community==0.0.20
+sentence-transformers==2.3.1
+
+# Vector DB
+chromadb==0.4.22
+
+# Document Processing
+pypdf==4.0.0
+python-docx==1.1.0
+beautifulsoup4==4.12.3
+markdown==3.5.2
+
+# GitHub Integration
+PyGithub==2.1.1
+gitpython==3.1.41
+
+# HTTP/API
+httpx==0.26.0
+requests==2.31.0
+
+# Utils
+pydantic-settings==2.1.0
+tenacity==8.2.3
+tiktoken==0.5.2
+numpy==1.26.3
+
+# Eval
+pytest==8.0.0
+pytest-asyncio==0.23.4
