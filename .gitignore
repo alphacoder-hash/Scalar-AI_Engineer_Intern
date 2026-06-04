@@ -17,9 +17,8 @@ dist/
 credentials.json
 token.pickle
 
-# Vector DB
-chroma_db/
-*.db
+# Vector DB - keep chroma_db in repo for deployment
+# chroma_db/
 
 # Logs
 *.log
