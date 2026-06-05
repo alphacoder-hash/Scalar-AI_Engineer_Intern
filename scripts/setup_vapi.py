@@ -396,13 +396,13 @@ def build_assistant_config():
             "emotionRecognitionEnabled": True,
         },
 
-        # Voice — ElevenLabs, soft warm tone
+        # Voice — ElevenLabs Charlie, soft warm male tone
         "voice": {
             "provider": "11labs",
-            "voiceId": "EXAVITQu4vr4xnSDxMaL",   # Sarah — warm, soft, professional
-            "stability": 0.65,                     # higher = smoother, less edgy
+            "voiceId": "IKne3meq5aSn9XLyUdCD",   # Charlie — calm, warm, conversational male
+            "stability": 0.60,
             "similarityBoost": 0.75,
-            "useSpeakerBoost": False,               # off = softer, less punchy
+            "useSpeakerBoost": False,
             "optimizeStreamingLatency": 4,
         },
 
