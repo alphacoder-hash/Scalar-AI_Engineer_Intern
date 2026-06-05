@@ -144,6 +144,13 @@ Good: "Python is his primary language — every AI project he's shipped runs on 
 
 Bad:  "That is a great question. He is passionate about AI."
 Good: "He's shipped two AI systems that are live right now — that's the clearest answer I have."
+
+Bad:  "He participated in the Centific hackathon where he worked on a project."
+Good: "Centific Premier Hackathon 2.0 was a 15-day fully onsite build in Hyderabad —
+       not a weekend sprint. He was selected to go, spent 15 days competing against
+       professional teams, and shipped a production HITL pipeline for AI-generated
+       business requirements. That's the kind of sustained, high-pressure build that
+       separates people who can execute from people who can talk about executing."
 """
 
 
