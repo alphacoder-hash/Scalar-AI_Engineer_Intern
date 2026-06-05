@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 from pathlib import Path
 from dotenv import load_dotenv
@@ -8,14 +8,29 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 import httpx
 
+# Discovered via API: cal.com/aryan-pandey-wpce3h/30min
+_KNOWN_EVENT_TYPE_ID = 5906114
+_KNOWN_EVENT_SLUG = "30min"
+_CAL_API_VERSION = "2024-06-14"
+
+
 class CalendarManager:
     def __init__(self):
         self.api_key = os.getenv("CALCOM_API_KEY")
         self.username = os.getenv("CALCOM_USERNAME", "aryan-pandey-wpce3h")
-        self.base_url = "https://api.cal.com/v1"
-        self.event_type_id = None
-        self.event_slug = "30min"  # default Cal.com slug
+        self.base_url = "https://api.cal.com/v2"
+        self.event_type_id = _KNOWN_EVENT_TYPE_ID
+        self.event_slug = _KNOWN_EVENT_SLUG
+        # Try to refresh event type id from API (non-fatal if it fails)
         self._get_event_type()
+
+    @property
+    def _headers(self):
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "cal-api-version": _CAL_API_VERSION,
+            "Content-Type": "application/json",
+        }
 
     def _get_event_type(self):
         if not self.api_key:
@@ -24,77 +39,111 @@ class CalendarManager:
         try:
             response = httpx.get(
                 f"{self.base_url}/event-types",
-                params={"apiKey": self.api_key},
-                timeout=10.0
+                headers=self._headers,
+                timeout=10.0,
             )
             if response.status_code == 200:
                 data = response.json()
-                event_types = data.get("event_types", [])
-                if event_types:
-                    self.event_type_id = event_types[0]["id"]
-                    self.event_slug = event_types[0].get("slug", "30min")
-                    print(f"Cal.com event type: {event_types[0].get('title')} (id={self.event_type_id})")
-                else:
-                    print("No Cal.com event types found. Create one at cal.com/event-types")
+                # v2 (2024-06-14): {"status":"success","data":[{...}]}
+                event_types = data.get("data", [])
+                for et in event_types:
+                    if not et.get("hidden", False):
+                        self.event_type_id = et["id"]
+                        self.event_slug = et.get("slug", _KNOWN_EVENT_SLUG)
+                        print(f"Cal.com event type: {et.get('title')} (id={self.event_type_id})")
+                        return
+                print(f"Using hardcoded event type id={self.event_type_id}")
             else:
-                print(f"Cal.com API error: {response.status_code} {response.text[:100]}")
+                print(f"Cal.com API warning: {response.status_code} — using hardcoded event type id={self.event_type_id}")
         except Exception as e:
-            print(f"Cal.com init error: {e}")
+            print(f"Cal.com init warning: {e} — using hardcoded event type id={self.event_type_id}")
 
-    async def get_available_slots(self, start_date: str, end_date: str, duration_minutes: int = 30) -> List[Dict]:
-        """Get available slots - real Cal.com or generated fallback"""
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _as_utc_iso(dt_str: str) -> str:
+        dt_str = (dt_str or "").strip()
+        if not dt_str:
+            return datetime.now(timezone.utc).isoformat()
+        if len(dt_str) == 10:
+            return datetime.fromisoformat(dt_str).replace(
+                tzinfo=timezone.utc).isoformat()
+        if dt_str.endswith("Z"):
+            return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).isoformat()
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+
+    # ── Slots ─────────────────────────────────────────────────────────────────
+
+    async def get_available_slots(self, start_date: str, end_date: str,
+                                  duration_minutes: int = 30) -> List[Dict]:
+        start_utc = self._as_utc_iso(start_date)
+        end_utc = self._as_utc_iso(end_date)
+
         if self.api_key and self.event_type_id:
             try:
                 async with httpx.AsyncClient() as client:
                     response = await client.get(
-                        f"{self.base_url}/slots",
+                        f"{self.base_url}/slots/available",
+                        headers=self._headers,
                         params={
-                            "apiKey": self.api_key,
                             "eventTypeId": self.event_type_id,
-                            "startTime": start_date,
-                            "endTime": end_date
+                            "startTime": start_utc,
+                            "endTime": end_utc,
                         },
-                        timeout=10.0
+                        timeout=10.0,
                     )
                     if response.status_code == 200:
                         data = response.json()
-                        slots = []
-                        for date, times in data.get("slots", {}).items():
+                        raw_slots = (data.get("data") or {}).get("slots", {})
+                        slots: List[Dict] = []
+                        for _, times in raw_slots.items():
                             for slot in times:
+                                slot_time = slot.get("time") if isinstance(slot, dict) else None
+                                if not slot_time:
+                                    continue
+                                start_dt = datetime.fromisoformat(
+                                    slot_time.replace("Z", "+00:00"))
                                 slots.append({
-                                    "start": slot["time"],
-                                    "end": (datetime.fromisoformat(slot["time"].replace("Z", "+00:00")) + timedelta(minutes=duration_minutes)).isoformat(),
-                                    "formatted": datetime.fromisoformat(slot["time"].replace("Z", "+00:00")).strftime("%A, %B %d at %I:%M %p UTC")
+                                    "start": start_dt.isoformat(),
+                                    "end": (start_dt + timedelta(
+                                        minutes=duration_minutes)).isoformat(),
+                                    "formatted": start_dt.strftime(
+                                        "%A, %B %d at %I:%M %p UTC"),
+                                    "source": "calcom",
                                 })
                         if slots:
                             return slots[:5]
+                    else:
+                        print(f"Cal.com slots error: {response.status_code} {response.text[:200]}")
             except Exception as e:
-                print(f"Cal.com slots error: {e}")
+                print(f"Cal.com slots exception: {e}")
 
-        # Fallback: generate realistic slots for next 7 days
-        return self._generate_slots(start_date, duration_minutes)
+        slots = self._generate_slots(start_date, duration_minutes)
+        for s in slots:
+            s["source"] = "fallback"
+        return slots
 
     def _generate_slots(self, start_date: str, duration_minutes: int = 30) -> List[Dict]:
-        """Generate available slots for next 7 days"""
         try:
             start = datetime.fromisoformat(start_date.replace("Z", ""))
-        except:
-            start = datetime.utcnow()
+        except Exception:
+            start = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        slots = []
-        current = start
-        days_checked = 0
+        slots, current, days_checked = [], start, 0
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         while len(slots) < 5 and days_checked < 14:
-            # Skip weekends
             if current.weekday() < 5:
                 for hour in [10, 14, 16]:
-                    slot_time = current.replace(hour=hour, minute=0, second=0, microsecond=0)
-                    if slot_time > datetime.utcnow():
+                    t = current.replace(hour=hour, minute=0, second=0, microsecond=0)
+                    if t > now:
                         slots.append({
-                            "start": slot_time.isoformat(),
-                            "end": (slot_time + timedelta(minutes=duration_minutes)).isoformat(),
-                            "formatted": slot_time.strftime("%A, %B %d at %I:%M %p UTC")
+                            "start": t.isoformat(),
+                            "end": (t + timedelta(minutes=duration_minutes)).isoformat(),
+                            "formatted": t.strftime("%A, %B %d at %I:%M %p UTC"),
                         })
                     if len(slots) >= 5:
                         break
@@ -103,9 +152,14 @@ class CalendarManager:
 
         return slots
 
-    async def book_slot(self, datetime_str: str, attendee_name: str, attendee_email: str, duration_minutes: int = 30) -> Dict:
-        """Book via Cal.com API"""
-        start_time = datetime.fromisoformat(datetime_str.replace("Z", ""))
+    # ── Booking ───────────────────────────────────────────────────────────────
+
+    async def book_slot(self, datetime_str: str, attendee_name: str,
+                        attendee_email: str, duration_minutes: int = 30) -> Dict:
+        dt_norm = self._as_utc_iso(datetime_str)
+        start_time = datetime.fromisoformat(dt_norm)
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
         end_time = start_time + timedelta(minutes=duration_minutes)
         formatted = start_time.strftime("%A, %B %d at %I:%M %p UTC")
 
@@ -114,47 +168,51 @@ class CalendarManager:
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         f"{self.base_url}/bookings",
-                        params={"apiKey": self.api_key},
+                        headers=self._headers,
                         json={
                             "eventTypeId": self.event_type_id,
                             "start": start_time.isoformat(),
-                            "end": end_time.isoformat(),
-                            "responses": {
+                            "attendee": {
                                 "name": attendee_name,
                                 "email": attendee_email,
-                                "notes": "Interview booking via Sam AI Persona"
+                                "timeZone": "UTC",
                             },
-                            "timeZone": "UTC",
-                            "language": "en",
-                            "metadata": {"source": "sam-ai-persona"}
+                            "metadata": {"source": "sam-ai-persona"},
                         },
-                        timeout=15.0
+                        timeout=15.0,
                     )
                     if response.status_code in [200, 201]:
-                        data = response.json()
+                        booking_data = response.json().get("data", {})
                         return {
-                            "id": data.get("id"),
-                            "link": f"https://cal.com/{self.username}",
+                            "id": booking_data.get("id") or booking_data.get("uid"),
+                            "link": f"https://cal.com/{self.username}/{self.event_slug}",
                             "start": start_time.isoformat(),
                             "end": end_time.isoformat(),
                             "formatted": formatted,
                             "status": "confirmed",
-                            "message": f"Confirmed! Interview booked for {formatted}. Calendar invite sent to {attendee_email}"
+                            "source": "calcom",
+                            "message": (
+                                f"Confirmed! Interview booked for {formatted}. "
+                                f"Calendar invite sent to {attendee_email}."
+                            ),
                         }
-                    else:
-                        print(f"Cal.com booking error: {response.status_code} {response.text[:200]}")
+                    print(f"Cal.com booking error: {response.status_code} {response.text[:300]}")
             except Exception as e:
                 print(f"Cal.com booking exception: {e}")
 
-        # Fallback mock booking
+        # Fallback
         return {
-            "id": f"booking-{start_time.timestamp():.0f}",
-            "link": f"https://cal.com/{self.username}",
+            "id": f"booking-{int(start_time.timestamp())}",
+            "link": f"https://cal.com/{self.username}/{self.event_slug}",
             "start": start_time.isoformat(),
             "end": end_time.isoformat(),
             "formatted": formatted,
             "status": "confirmed",
-            "message": f"Confirmed! Interview booked for {formatted}. Calendar invite sent to {attendee_email}"
+            "source": "fallback",
+            "message": (
+                f"Confirmed! Interview booked for {formatted}. "
+                f"Calendar invite sent to {attendee_email} (fallback mode)."
+            ),
         }
 
     def is_ready(self) -> bool:
