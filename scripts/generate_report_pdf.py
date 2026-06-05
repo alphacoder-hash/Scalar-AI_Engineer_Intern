@@ -99,13 +99,18 @@ def main(metrics_path: str = "./evals/metrics.json", out_pdf: str = "./evals/rep
     else:
         draw_paragraph("No chat groundedness metrics found.")
 
-    # Retrieval quality (optional)
+    # Retrieval quality
     draw_bold("Retrieval Quality")
-    # We don't currently store precision/recall separately in metrics.json in this repo; keep placeholder.
-    draw_paragraph(
-        "This repo's run_evals.py prints retrieval precision/recall to stdout. "
-        "If you want these persisted into metrics.json, update scripts/run_evals.py accordingly."
-    )
+    ret = metrics.get("retrieval", {})
+    if ret and ret.get("precision") is not None:
+        draw_paragraph(
+            f"Precision: {ret.get('precision', 0):.2f} | "
+            f"Recall: {ret.get('recall', 0):.2f} | "
+            f"F1: {ret.get('f1', 0):.2f}. "
+            "Hybrid semantic + keyword re-ranking; repo-focused boosting on named-repo queries."
+        )
+    else:
+        draw_paragraph("Run scripts/run_evals.py to populate retrieval metrics.")
 
     # Failure modes (template-friendly)
     draw_bold("Failure Modes Found (Template)")

@@ -245,14 +245,14 @@ class RAGEngine:
         max_tok  = 220 if voice else 1200
 
         r = await self._http.post(
-                self.groq_url,
-                headers={"Authorization": f"Bearer {self.groq_api_key}",
-                         "Content-Type": "application/json"},
-                json={"model": self.model, "messages": msgs,
-                      "max_tokens": max_tok, "temperature": 0.25},
-            )
-            r.raise_for_status()
-            answer = r.json()["choices"][0]["message"]["content"]
+            self.groq_url,
+            headers={"Authorization": f"Bearer {self.groq_api_key}",
+                     "Content-Type": "application/json"},
+            json={"model": self.model, "messages": msgs,
+                  "max_tokens": max_tok, "temperature": 0.25},
+        )
+        r.raise_for_status()
+        answer = r.json()["choices"][0]["message"]["content"]
 
         history.append((message, answer))
         return {"answer": answer, "session_id": session_id, "sources": docs}
@@ -277,12 +277,12 @@ class RAGEngine:
 
         full = ""
         async with self._http.stream(
-                "POST", self.groq_url,
-                headers={"Authorization": f"Bearer {self.groq_api_key}",
-                         "Content-Type": "application/json"},
-                json={"model": self.model, "messages": msgs,
-                      "max_tokens": 1200, "temperature": 0.25, "stream": True},
-            ) as response:
+            "POST", self.groq_url,
+            headers={"Authorization": f"Bearer {self.groq_api_key}",
+                     "Content-Type": "application/json"},
+            json={"model": self.model, "messages": msgs,
+                  "max_tokens": 1200, "temperature": 0.25, "stream": True},
+        ) as response:
                 async for line in response.aiter_lines():
                     if line.startswith("data: ") and line != "data: [DONE]":
                         try:
