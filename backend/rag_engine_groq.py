@@ -15,7 +15,7 @@ class RAGEngine:
     def __init__(self):
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.candidate_name = os.getenv("CANDIDATE_NAME", "Vaibhav Pandey")
-        self.model = "llama-3.1-70b-versatile"
+        self.model = "llama-3.3-70b-versatile"
         self.groq_url = "https://api.groq.com/openai/v1/chat/completions"
 
         # Free local embeddings
