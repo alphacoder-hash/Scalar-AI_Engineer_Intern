@@ -14,6 +14,8 @@ COPY start_server.py .
 ENV PYTHONPATH=/app
 ENV CHROMA_PERSIST_DIR=/app/chroma_db
 ENV PORT=8000
+# Pre-download embedding model so startup doesn't time out
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
 EXPOSE 8000
 
