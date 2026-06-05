@@ -243,6 +243,10 @@ class RAGEngine:
             if t == "profile_summary":          d["score"] += 0.50
             elif t == "readme":                 d["score"] += 0.10
             elif t in ("commits", "commit_diffs"): d["score"] += 0.08
+            # Boost IncidentCommander + Centific for fit/hire questions
+            repo = self._repo_slug(d["metadata"].get("repo", ""))
+            if repo in ("metahackathonincidentcommander", "incidentcommander"):
+                d["score"] += 0.15
 
         docs_raw.sort(key=lambda x: x["score"], reverse=True)
 
@@ -309,14 +313,26 @@ class RAGEngine:
         msgs     = self._messages(message, docs, history, voice=voice)
         max_tok  = 200 if voice else 2000
 
-        r = await self._http.post(
-            self.groq_url,
-            headers={"Authorization": f"Bearer {self.groq_api_key}",
-                     "Content-Type": "application/json"},
-            json={"model": self.model, "messages": msgs,
-                  "max_tokens": max_tok, "temperature": 0.3},
-        )
-        r.raise_for_status()
+        # Retry up to 3 times on Groq 429 rate limit
+        for attempt in range(3):
+            r = await self._http.post(
+                self.groq_url,
+                headers={"Authorization": f"Bearer {self.groq_api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": self.model, "messages": msgs,
+                      "max_tokens": max_tok, "temperature": 0.3},
+            )
+            if r.status_code == 429:
+                import asyncio
+                wait = 2 ** attempt          # 1s, 2s, 4s
+                await asyncio.sleep(wait)
+                continue
+            r.raise_for_status()
+            break
+        else:
+            return {"answer": "One moment — give me a second and try again.",
+                    "session_id": session_id, "sources": []}
+
         answer = r.json()["choices"][0]["message"]["content"]
 
         history.append((message, answer))
