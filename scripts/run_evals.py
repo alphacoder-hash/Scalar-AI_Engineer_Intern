@@ -15,7 +15,7 @@ class Evaluator:
         }
     
     async def evaluate_voice_latency(self, call_logs_file: str = "./evals/call_logs.jsonl"):
-        \"\"\"Evaluate voice call latency metrics\"\"\"
+        """Evaluate voice call latency metrics"""
         if not Path(call_logs_file).exists():
             print("No call logs found")
             return
@@ -54,8 +54,10 @@ class Evaluator:
         print(f"  Success rate: {self.results['voice']['success_rate']*100:.1f}%")
     
     async def evaluate_rag_groundedness(self, test_questions: List[Dict]):
-        \"\"\"Evaluate RAG hallucination rate\"\"\"
-        from backend.rag_engine import RAGEngine
+        """Evaluate RAG hallucination rate"""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+        from rag_engine_groq import RAGEngine
         
         rag = RAGEngine()
         
@@ -116,8 +118,10 @@ class Evaluator:
         return results
     
     async def test_retrieval_quality(self):
-        \"\"\"Test retrieval precision and recall\"\"\"
-        from backend.rag_engine import RAGEngine
+        """Test retrieval precision and recall"""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+        from rag_engine_groq import RAGEngine
         
         rag = RAGEngine()
         
@@ -165,11 +169,11 @@ class Evaluator:
         }
     
     def save_report(self, output_file: str = "./evals/metrics.json"):
-        \"\"\"Save evaluation results\"\"\"
+        """Save evaluation results"""
         Path("./evals").mkdir(exist_ok=True)
         
         with open(output_file, 'w') as f:
-            json.dumps(self.results, f, indent=2)
+            json.dump(self.results, f, indent=2)
         
         print(f"\n✅ Results saved to {output_file}")
 

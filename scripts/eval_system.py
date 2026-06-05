@@ -21,44 +21,60 @@ class Evaluator:
         }
     
     async def evaluate_voice_latency(self, call_logs_file: str = "./evals/call_logs.jsonl"):
-        """Evaluate voice call latency metrics"""
+        """Evaluate voice call latency and booking metrics"""
         if not Path(call_logs_file).exists():
             print("No call logs found. Make test calls first.")
             self.results["voice"] = {"status": "no_data"}
             return
-        
+
         latencies = []
         durations = []
         success_count = 0
+        booking_count = 0
         total_calls = 0
-        
+        tool_calls = 0
+
         with open(call_logs_file, 'r') as f:
             for line in f:
+                line = line.strip()
+                if not line:
+                    continue
                 data = json.loads(line)
-                total_calls += 1
-                
-                if data.get("latency"):
-                    latencies.append(data["latency"])
-                
-                if data.get("duration"):
-                    durations.append(data["duration"])
-                
-                if data.get("success"):
-                    success_count += 1
-        
+
+                # End-of-call records have latency/duration/success
+                if data.get("latency") is not None or data.get("ended_reason") is not None:
+                    total_calls += 1
+                    if data.get("latency"):
+                        latencies.append(data["latency"])
+                    if data.get("duration"):
+                        durations.append(data["duration"])
+                    if data.get("success"):
+                        success_count += 1
+
+                # Tool-call records have tool_call/booking_confirmed
+                if data.get("tool_call"):
+                    tool_calls += 1
+                    if data.get("booking_confirmed"):
+                        booking_count += 1
+
         self.results["voice"] = {
             "total_calls": total_calls,
             "avg_latency": statistics.mean(latencies) if latencies else 0,
             "p95_latency": statistics.quantiles(latencies, n=20)[18] if len(latencies) > 20 else 0,
             "success_rate": success_count / total_calls if total_calls else 0,
-            "avg_duration": statistics.mean(durations) if durations else 0
+            "avg_duration": statistics.mean(durations) if durations else 0,
+            "tool_calls": tool_calls,
+            "bookings_confirmed": booking_count,
+            "booking_success_rate": booking_count / tool_calls if tool_calls else 0,
         }
-        
+
+        v = self.results["voice"]
         print(f"\n📞 Voice Metrics:")
         print(f"  Total calls: {total_calls}")
-        print(f"  Avg first response: {self.results['voice']['avg_latency']:.2f}s")
-        print(f"  P95 latency: {self.results['voice']['p95_latency']:.2f}s")
-        print(f"  Success rate: {self.results['voice']['success_rate']*100:.1f}%")
+        print(f"  Avg first response: {v['avg_latency']:.2f}s")
+        print(f"  P95 latency: {v['p95_latency']:.2f}s")
+        print(f"  Call success rate: {v['success_rate']*100:.1f}%")
+        print(f"  Bookings confirmed: {booking_count}/{tool_calls} ({v['booking_success_rate']*100:.1f}%)")
     
     async def evaluate_rag_groundedness(self, test_questions: List[Dict] = None):
         """Evaluate RAG hallucination rate"""
