@@ -11,7 +11,7 @@ from pathlib import Path
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 VAPI_KEY   = os.getenv("VAPI_API_KEY")
-BACKEND    = os.getenv("BACKEND_URL", "https://scalar-aiengineerintern-production.up.railway.app")
+BACKEND    = os.getenv("BACKEND_URL", "https://web-production-21df0.up.railway.app")
 HEADERS    = {"Authorization": f"Bearer {VAPI_KEY}", "Content-Type": "application/json"}
 
 # ── Perfect system prompt ─────────────────────────────────────────────────────
