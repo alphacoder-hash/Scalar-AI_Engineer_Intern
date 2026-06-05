@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 import os
 from dotenv import load_dotenv
 
@@ -220,12 +220,29 @@ async def book_meeting(request: BookingRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _dispatch_voice(request: Request) -> Dict:
+    """Parse webhook body regardless of content-type and dispatch."""
+    try:
+        body = await request.body()
+        payload = json.loads(body) if body else {}
+    except Exception:
+        payload = {}
+    return await voice_handler.handle_webhook(payload)
+
+
 @app.post("/voice/webhook")
 async def voice_webhook(request: Request):
     try:
-        payload = await request.json()
-        response = await voice_handler.handle_webhook(payload)
-        return response
+        return await _dispatch_voice(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Vapi also posts to /vapi/webhook on some dashboard configs — alias it
+@app.post("/vapi/webhook")
+async def vapi_webhook_alias(request: Request):
+    try:
+        return await _dispatch_voice(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

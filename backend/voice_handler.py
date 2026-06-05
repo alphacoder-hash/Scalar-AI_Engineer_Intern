@@ -1,178 +1,123 @@
-import os
 import json
-from typing import Dict
+from typing import Dict, List
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from rag_engine_groq import RAGEngine
 from calendar_calcom import CalendarManager
+
 
 class VoiceHandler:
     def __init__(self):
-        self.rag_engine = RAGEngine()
         self.calendar_manager = CalendarManager()
 
     async def handle_webhook(self, payload: Dict) -> Dict:
-        """Handle all Vapi webhook events"""
+        """
+        Route Vapi webhook events.
+
+        Tool invocations arrive as message.type == "tool-calls"
+        (toolCallList) or the legacy "function-call" shape.
+        """
         message = payload.get("message", {})
-        message_type = message.get("type")
+        mtype = message.get("type", "")
 
-        if message_type == "function-call":
-            return await self._handle_function_call(message)
+        if mtype == "tool-calls":
+            return await self._handle_tool_calls(message)
 
-        elif message_type == "end-of-call-report":
-            await self._log_call(message)
-            return {"status": "ok"}
+        if mtype == "function-call":
+            return await self._handle_legacy_function_call(message)
 
+        if mtype == "end-of-call-report":
+            self._log_end_of_call(message)
 
         return {"status": "ok"}
 
-    async def _handle_function_call(self, message: Dict) -> Dict:
-        """Handle Vapi function calls.
+    # ── New Vapi format ───────────────────────────────────────────────────────
 
-        Tool-call schema is driven by scripts/setup_vapi.py.
-        We return a plain {"result": "..."} payload so Vapi can speak it.
-        """
+    async def _handle_tool_calls(self, message: Dict) -> Dict:
+        results = []
+        for tc in message.get("toolCallList", []):
+            tc_id = tc.get("id", "")
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            raw = func.get("arguments", {})
+            params = raw if isinstance(raw, dict) else self._parse_json(raw)
+            result = await self._dispatch(name, params, message)
+            results.append({"toolCallId": tc_id, "result": result})
+        return {"results": results}
+
+    # ── Legacy format ─────────────────────────────────────────────────────────
+
+    async def _handle_legacy_function_call(self, message: Dict) -> Dict:
         func = message.get("functionCall") or message.get("function_call") or {}
-        name = func.get("name")
-
+        name = func.get("name", "")
         params = func.get("parameters", {})
         if isinstance(params, str):
-            try:
-                params = json.loads(params)
-            except Exception:
-                params = {}
+            params = self._parse_json(params)
+        result = await self._dispatch(name, params, message)
+        return {"result": result}
 
-        call_ts = datetime.utcnow().isoformat()
-        tool_name = name or "unknown"
-        first_token_ts = (message.get("call") or {}).get("firstTokenTimestamp")
+    # ── Dispatcher ────────────────────────────────────────────────────────────
 
-
+    async def _dispatch(self, name: str, params: Dict, message: Dict) -> str:
+        call_id = (message.get("call") or {}).get("id")
         try:
             if name == "check_availability":
-                start_date = params.get("start_date")
-                end_date = params.get("end_date")
-
-                # Default to next 7 days if not specified
-                if not start_date:
-                    start_date = datetime.utcnow().date().isoformat()
-                if not end_date:
-                    end_date = (datetime.utcnow().date() + timedelta(days=7)).isoformat()
-
-                slots = await self.calendar_manager.get_available_slots(start_date, end_date)
-
+                start = params.get("start_date") or datetime.utcnow().date().isoformat()
+                end = params.get("end_date") or (datetime.utcnow().date() + timedelta(days=7)).isoformat()
+                slots = await self.calendar_manager.get_available_slots(start, end)
                 if slots:
-                    slot_list = ", ".join([s["formatted"] for s in slots[:3] if s.get("formatted")])
+                    slot_list = ", ".join(s["formatted"] for s in slots[:3] if s.get("formatted"))
                     result = f"Available slots: {slot_list}. Which works best for you?"
                 else:
                     result = "No slots available in that range. Try a different week."
-
-                # Log tool call
-                self._append_call_log({
-                    "timestamp": call_ts,
-                    "call_id": (message.get("call") or {}).get("id"),
-                    "latency": None,
-                    "duration": None,
-                    "success": False,
-                    "tool_call": tool_name,
-                    "tool_ok": True,
-                    "booking_confirmed": False
-                })
-                return {"result": result}
-
+                self._log({"call_id": call_id, "tool": name, "ok": True, "booking_confirmed": False})
+                return result
 
             if name == "book_slot":
-                datetime_str = params.get("datetime")
-                name_val = params.get("name")
+                dt = params.get("datetime")
+                attendee = params.get("name")
                 email = params.get("email")
+                if not all([dt, attendee, email]):
+                    self._log({"call_id": call_id, "tool": name, "ok": False, "error": "missing_fields"})
+                    return "I need the date, your full name, and email to book. Could you provide those?"
+                booking = await self.calendar_manager.book_slot(dt, attendee, email)
+                confirmed = booking.get("status") == "confirmed"
+                self._log({"call_id": call_id, "tool": name, "ok": confirmed,
+                           "booking_confirmed": confirmed, "source": booking.get("source")})
+                return booking.get("message", "Confirmed! Your interview has been booked.")
 
-                if not all([datetime_str, name_val, email]):
-                    self._append_call_log({
-                        "timestamp": call_ts,
-                        "call_id": (message.get("call") or {}).get("id"),
-                        "latency": None,
-                        "duration": None,
-                        "success": False,
-                        "tool_call": tool_name,
-                        "tool_ok": False,
-                        "booking_confirmed": False,
-                        "error": "missing_fields"
-                    })
-                    return {"result": "I need the date, your full name, and email to book. Could you provide those?"}
+            self._log({"call_id": call_id, "tool": name, "ok": False, "error": "unknown_tool"})
+            return f"Unknown function: {name}"
 
+        except Exception as exc:
+            self._log({"call_id": call_id, "tool": name, "ok": False, "error": str(exc)[:300]})
+            return "I had a small hiccup there — what time works for you?"
 
-                booking = await self.calendar_manager.book_slot(datetime_str, name_val, email)
-                confirmed = (booking.get("status") == "confirmed")
-                source = booking.get("source")
+    # ── Logging helpers ───────────────────────────────────────────────────────
 
-                self._append_call_log({
-                    "timestamp": call_ts,
-                    "call_id": (message.get("call") or {}).get("id"),
-                    "tool_call": tool_name,
-                    "tool_ok": confirmed,
-                    "booking_confirmed": confirmed,
-                    "booking_source": source
-                })
-                return {"result": booking.get("message", "Confirmed! Your interview has been booked.")}
-
-            # Unknown tool
-            self._append_call_log({
-                "timestamp": call_ts,
-                "call_id": (message.get("call") or {}).get("id"),
-                "latency": None,
-                "duration": None,
-                "success": False,
-                "tool_call": tool_name,
-                "tool_ok": False,
-                "booking_confirmed": False,
-                "error": "unknown_tool"
-            })
-
-            return {"result": f"Unknown function: {name}"}
-
-
-        except Exception as e:
-            print(f"Function call error: {e}")
-            self._append_call_log({
-                "timestamp": call_ts,
-                "call_id": (message.get("call") or {}).get("id"),
-                "tool_call": tool_name,
-                "tool_ok": False,
-                "booking_confirmed": False,
-                "error": str(e)[:300]
-            })
-            return {"result": "I had trouble with that. Let me try again—what time works for you?"}
-
-    def _append_call_log(self, metrics: Dict):
-        """Append a single JSON line to eval logs."""
+    def _log(self, metrics: Dict):
         log_path = Path(__file__).parent.parent / "evals" / "call_logs.jsonl"
         log_path.parent.mkdir(exist_ok=True)
+        metrics["timestamp"] = datetime.utcnow().isoformat()
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
 
-
-    async def _log_call(self, report: Dict):
-        """Log end-of-call metrics for evals.
-
-        eval_system.py reads: latency, duration, success.
-        """
-        ended_reason = report.get("endedReason", "")
-        metrics = {
+    def _log_end_of_call(self, report: Dict):
+        ended = report.get("endedReason", "")
+        self._log({
             "call_id": (report.get("call") or {}).get("id"),
             "latency": report.get("firstTokenLatencySeconds") or report.get("latency"),
             "duration": report.get("durationSeconds"),
-            "success": ended_reason not in ["error", "assistant-error", "pipeline-error"],
-            "ended_reason": ended_reason,
-            "tool_call": None,
-            "tool_ok": None,
-            "booking_confirmed": None,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        log_path = Path(__file__).parent.parent / "evals" / "call_logs.jsonl"
-        log_path.parent.mkdir(exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(metrics) + "\n")
-        print(f"Call logged: {metrics}")
+            "success": ended not in {"error", "assistant-error", "pipeline-error"},
+            "ended_reason": ended,
+        })
+
+    @staticmethod
+    def _parse_json(raw) -> Dict:
+        try:
+            return json.loads(raw) if raw else {}
+        except Exception:
+            return {}
