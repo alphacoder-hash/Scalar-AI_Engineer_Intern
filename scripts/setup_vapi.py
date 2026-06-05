@@ -294,7 +294,6 @@ def build_assistant_config():
             "maxTokens": 320,            # enough for 3-4 spoken sentences per answer guide
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}],
             "tools": TOOLS,
-            "toolChoice": "auto",
             "emotionRecognitionEnabled": True,
         },
 
@@ -335,9 +334,6 @@ def build_assistant_config():
         **({"serverUrlSecret": os.getenv("VAPI_SERVER_SECRET")} if os.getenv("VAPI_SERVER_SECRET") else {}),
 
         # ── Interruption handling ──
-        # interruptionSensitivity: 0=never, 1=hair-trigger. 0.6 catches real interruptions
-        # without cutting off on background noise.
-        "interruptionSensitivity": 0.6,
         "startSpeakingPlan": {
             "waitSeconds": 0.2,
             "smartEndpointingEnabled": True,
