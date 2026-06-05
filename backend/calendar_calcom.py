@@ -11,7 +11,7 @@ import httpx
 # Discovered via API: cal.com/aryan-pandey-wpce3h/30min
 _KNOWN_EVENT_TYPE_ID = 5906114
 _KNOWN_EVENT_SLUG = "30min"
-_CAL_API_VERSION = "2024-06-14"
+_CAL_API_VERSION = "2024-08-13"
 
 
 class CalendarManager:
