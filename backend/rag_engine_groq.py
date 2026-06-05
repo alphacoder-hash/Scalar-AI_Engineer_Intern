@@ -149,9 +149,18 @@ Good: "He's shipped two AI systems that are live right now — that's the cleare
 
 class RAGEngine:
     def __init__(self):
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.model        = "llama-3.3-70b-versatile"
-        self.groq_url     = "https://api.groq.com/openai/v1/chat/completions"
+        # Support multiple Groq keys — rotate on 429
+        raw_keys = [
+            os.getenv("GROQ_API_KEY"),
+            os.getenv("GROQ_API_KEY_2"),
+            os.getenv("GROQ_API_KEY_3"),
+        ]
+        self.groq_keys = [k for k in raw_keys if k]
+        if not self.groq_keys:
+            print("WARNING: No GROQ_API_KEY set")
+        self._key_index = 0
+        self.model    = "llama-3.3-70b-versatile"
+        self.groq_url = "https://api.groq.com/openai/v1/chat/completions"
 
         print("Loading embeddings model...")
         self.encoder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
@@ -313,19 +322,22 @@ class RAGEngine:
         msgs     = self._messages(message, docs, history, voice=voice)
         max_tok  = 200 if voice else 2000
 
-        # Retry up to 3 times on Groq 429 rate limit
-        for attempt in range(3):
+        # Try each key in round-robin order; skip to next on 429
+        import asyncio
+        tried = 0
+        while tried < len(self.groq_keys):
+            key = self.groq_keys[self._key_index % len(self.groq_keys)]
             r = await self._http.post(
                 self.groq_url,
-                headers={"Authorization": f"Bearer {self.groq_api_key}",
+                headers={"Authorization": f"Bearer {key}",
                          "Content-Type": "application/json"},
                 json={"model": self.model, "messages": msgs,
                       "max_tokens": max_tok, "temperature": 0.3},
             )
             if r.status_code == 429:
-                import asyncio
-                wait = 2 ** attempt          # 1s, 2s, 4s
-                await asyncio.sleep(wait)
+                self._key_index += 1   # rotate to next key
+                tried += 1
+                await asyncio.sleep(0.5)
                 continue
             r.raise_for_status()
             break
@@ -356,10 +368,11 @@ class RAGEngine:
         history = self._get_history(session_id)
         msgs    = self._messages(message, docs, history, voice=False)
 
+        key = self.groq_keys[self._key_index % len(self.groq_keys)] if self.groq_keys else ""
         full = ""
         async with self._http.stream(
             "POST", self.groq_url,
-            headers={"Authorization": f"Bearer {self.groq_api_key}",
+            headers={"Authorization": f"Bearer {key}",
                      "Content-Type": "application/json"},
             json={"model": self.model, "messages": msgs,
                   "max_tokens": 2000, "temperature": 0.3, "stream": True},
