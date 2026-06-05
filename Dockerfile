@@ -10,10 +10,11 @@ COPY scripts/ ./scripts/
 COPY chroma_db/ ./chroma_db/
 COPY data/ ./data/
 COPY start_server.py .
-COPY .env.example .env
 
-RUN mkdir -p evals
+ENV PYTHONPATH=/app
+ENV CHROMA_PERSIST_DIR=/app/chroma_db
+ENV PORT=8000
 
 EXPOSE 8000
 
-CMD ["python", "start_server.py"]
+CMD ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -29,17 +29,19 @@ class RAGEngine:
         self._init_chroma()
 
     def _init_chroma(self):
-        # Try multiple possible paths
+        # Use CHROMA_PERSIST_DIR env var first, then try relative paths
         candidates = [
-            os.getenv("CHROMA_PERSIST_DIR", "chroma_db"),
+            os.getenv("CHROMA_PERSIST_DIR"),
+            "/app/chroma_db",
             "chroma_db",
-            "./chroma_db",
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chroma_db"),
-            os.path.join(os.getcwd(), "chroma_db")
+            os.path.join(os.getcwd(), "chroma_db"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chroma_db")
         ]
+        candidates = [c for c in candidates if c]  # remove None
         
         for persist_dir in candidates:
             full_path = Path(persist_dir)
+            print(f"Trying chroma path: {full_path} (exists: {full_path.exists()})")
             if full_path.exists():
                 try:
                     client = chromadb.PersistentClient(path=str(full_path))
@@ -48,12 +50,12 @@ class RAGEngine:
                         self.collection = client.get_collection(collections[0].name)
                         print(f"Vector store loaded: {full_path} ({self.collection.count()} chunks)")
                         return
+                    else:
+                        print(f"No collections in {full_path}")
                 except Exception as e:
                     print(f"Failed to load from {full_path}: {e}")
-                    continue
         
-        print(f"WARNING: Vector store not found. Tried: {candidates}")
-        print(f"Current working directory: {os.getcwd()}")
+        print(f"WARNING: Vector store not found. CWD: {os.getcwd()}")
 
     def _retrieve(self, query: str, k: int = 5) -> List[Dict]:
         if not self.collection:
