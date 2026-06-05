@@ -69,8 +69,19 @@ class VoiceHandler:
                 end = params.get("end_date") or (datetime.utcnow().date() + timedelta(days=7)).isoformat()
                 slots = await self.calendar_manager.get_available_slots(start, end)
                 if slots:
-                    slot_list = ", ".join(s["formatted"] for s in slots[:3] if s.get("formatted"))
-                    result = f"Available slots: {slot_list}. Which works best for you?"
+                    # Format slots in IST for the caller (UTC+5:30)
+                    def to_ist(s):
+                        try:
+                            from datetime import timezone
+                            dt = datetime.fromisoformat(s["start"].replace("Z", "+00:00"))
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            ist = dt + timedelta(hours=5, minutes=30)
+                            return ist.strftime("%A, %B %d at %I:%M %p IST")
+                        except Exception:
+                            return s.get("formatted", s.get("start", "unknown"))
+                    slot_list = ", ".join(to_ist(s) for s in slots[:3])
+                    result = f"Available slots (IST): {slot_list}. Which works best for you?"
                 else:
                     result = "No slots available in that range. Try a different week."
                 self._log({"call_id": call_id, "tool": name, "ok": True, "booking_confirmed": False})
@@ -80,14 +91,25 @@ class VoiceHandler:
                 dt = params.get("datetime")
                 attendee = params.get("name")
                 email = params.get("email")
-                if not all([dt, attendee, email]):
-                    self._log({"call_id": call_id, "tool": name, "ok": False, "error": "missing_fields"})
-                    return "I need the date, your full name, and email to book. Could you provide those?"
+                missing = [f for f, v in [("datetime", dt), ("name", attendee), ("email", email)] if not v]
+                if missing:
+                    self._log({"call_id": call_id, "tool": name, "ok": False, "error": f"missing: {missing}"})
+                    return f"Still need: {', '.join(missing)}. Could you provide those?"
                 booking = await self.calendar_manager.book_slot(dt, attendee, email)
                 confirmed = booking.get("status") == "confirmed"
                 self._log({"call_id": call_id, "tool": name, "ok": confirmed,
                            "booking_confirmed": confirmed, "source": booking.get("source")})
-                return booking.get("message", "Confirmed! Your interview has been booked.")
+                # Return IST time in confirmation message
+                try:
+                    from datetime import timezone
+                    dt_utc = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+                    if dt_utc.tzinfo is None:
+                        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+                    dt_ist = dt_utc + timedelta(hours=5, minutes=30)
+                    ist_str = dt_ist.strftime("%A, %B %d at %I:%M %p IST")
+                    return f"Done! You're booked for {ist_str}. Calendar invite sent to {email}."
+                except Exception:
+                    return booking.get("message", "Confirmed! Your interview has been booked.")
 
             self._log({"call_id": call_id, "tool": name, "ok": False, "error": "unknown_tool"})
             return f"Unknown function: {name}"
@@ -107,12 +129,17 @@ class VoiceHandler:
 
     def _log_end_of_call(self, report: Dict):
         ended = report.get("endedReason", "")
+        # Vapi end-of-call-report fields: startedAt, endedAt, durationSeconds, costs
+        analysis = report.get("analysis") or {}
         self._log({
             "call_id": (report.get("call") or {}).get("id"),
-            "latency": report.get("firstTokenLatencySeconds") or report.get("latency"),
             "duration": report.get("durationSeconds"),
+            "started_at": report.get("startedAt"),
+            "ended_at": report.get("endedAt"),
+            "cost": report.get("cost"),
             "success": ended not in {"error", "assistant-error", "pipeline-error"},
             "ended_reason": ended,
+            "summary": analysis.get("summary"),
         })
 
     @staticmethod

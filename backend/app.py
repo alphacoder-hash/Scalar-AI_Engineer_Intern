@@ -5,6 +5,8 @@ if sys.platform == "win32":
 
 import re
 import json
+import time
+import collections
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -37,6 +39,27 @@ app.add_middleware(
 rag_engine = RAGEngine()
 calendar_manager = CalendarManager()
 voice_handler = VoiceHandler()
+
+# ── Rate limiter (10 requests / 60s per IP) ───────────────────────────────────
+_RATE_WINDOW  = 60
+_RATE_LIMIT   = 10
+_MAX_BUCKETS  = 10_000   # cap dict size to prevent memory exhaustion
+_rate_buckets: Dict[str, list] = collections.defaultdict(list)
+
+def _check_rate(ip: str) -> bool:
+    now = time.time()
+    # Evict oldest IP entry when cap is hit
+    if ip not in _rate_buckets and len(_rate_buckets) >= _MAX_BUCKETS:
+        del _rate_buckets[next(iter(_rate_buckets))]
+    _rate_buckets[ip] = [t for t in _rate_buckets[ip] if now - t < _RATE_WINDOW]
+    if len(_rate_buckets[ip]) >= _RATE_LIMIT:
+        return False
+    _rate_buckets[ip].append(now)
+    return True
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    return forwarded.split(",")[0].strip() if forwarded else (request.client.host or "unknown")
 
 # ── Request Models ────────────────────────────────────────────────────────────
 
@@ -77,7 +100,13 @@ def _log_chat_booking(session_id, dt, name, email, booking):
 
 
 async def _extract_booking_fields(msg: str):
-    """Use LLM to extract datetime/name/email from a free-text message."""
+    """Extract datetime/name/email from a booking message via LLM.
+    Uses a fresh session each time to avoid history contamination.
+    Injection-checks the message first so crafted booking messages can't bypass _INJECTION_RE.
+    """
+    from rag_engine_groq import _INJECTION_RE, _REJECTION
+    if _INJECTION_RE.search(msg):
+        return "", "", ""
     extract_prompt = (
         "Extract scheduling info from the user message below. "
         "Return ONLY a JSON object with exactly these keys: "
@@ -87,7 +116,8 @@ async def _extract_booking_fields(msg: str):
         "No other text.\n"
         f"USER_MESSAGE: {msg}"
     )
-    result = await rag_engine.query(extract_prompt, session_id="_extract")
+    import uuid as _uuid
+    result = await rag_engine.query(extract_prompt, session_id=f"_extract_{_uuid.uuid4().hex}")
     raw = result.get("answer", "")
     m = re.search(r"\{.*?\}", raw, re.DOTALL)
     if m:
@@ -103,12 +133,22 @@ async def _extract_booking_fields(msg: str):
     return "", "", ""
 
 
-BOOKING_KEYWORDS = {"book", "schedule", "availability", "available", "interview", "set up", "arrange", "slot", "meeting"}
+BOOKING_KEYWORDS = {"book", "schedule", "availability", "available",
+                    "set up a call", "find a time", "interview slot", "arrange a meeting"}
 
 
 def _wants_booking(text: str) -> bool:
-    lower = text.lower()
-    return any(k in lower for k in BOOKING_KEYWORDS)
+    """Only trigger booking flow for unambiguous scheduling intent.
+    Avoids intercepting 'interview at Centific', 'available skills', etc.
+    """
+    lower = text.lower().strip()
+    # Explicit scheduling phrases
+    if re.search(r"\b(book|schedule|set up|arrange)\b.{0,30}\b(interview|call|meeting|slot|time)\b", lower):
+        return True
+    # Very short messages that are clearly booking requests
+    if len(lower) < 60 and re.search(r"\b(check (your |his )?(availability|calendar)|when (are you|is he|is vaibhav) (free|available)|interview slot)\b", lower):
+        return True
+    return False
 
 
 async def _handle_booking(msg: str, session_id: Optional[str]):
@@ -164,19 +204,21 @@ async def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: Request, body: ChatRequest):
+    if not _check_rate(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests — slow down.")
     try:
-        msg = (request.message or "").strip()
-
+        msg = (body.message or "").strip()
         if _wants_booking(msg):
-            return await _handle_booking(msg, request.session_id)
-
-        result = await rag_engine.query(request.message, session_id=request.session_id)
+            return await _handle_booking(msg, body.session_id)
+        result = await rag_engine.query(body.message, session_id=body.session_id)
         return ChatResponse(
             response=result["answer"],
             session_id=result["session_id"],
             sources=result.get("sources", [])
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -184,16 +226,25 @@ async def chat(request: ChatRequest):
 @app.websocket("/chat/stream")
 async def chat_stream(websocket: WebSocket):
     await websocket.accept()
+    ip = websocket.client.host or "unknown"
     try:
         while True:
             data = await websocket.receive_json()
-            message = data.get("message", "")
+            if not _check_rate(ip):
+                await websocket.send_json({"type": "error", "content": "Rate limit exceeded."})
+                continue
+            message    = data.get("message", "")
             session_id = data.get("session_id")
 
+            # For booking intent over WebSocket, send a prompt to use the modal
+            # (the frontend BookingModal handles the full booking flow)
             if _wants_booking(message):
-                booking_resp = await _handle_booking(message, session_id)
-                await websocket.send_json({"type": "content", "content": booking_resp.response, "session_id": booking_resp.session_id})
-                await websocket.send_json({"type": "sources", "sources": [], "session_id": booking_resp.session_id})
+                await websocket.send_json({
+                    "type": "content",
+                    "content": "Sure! Click the **📅 Book Interview** button at the top to pick a slot and confirm your details — it connects live to the calendar.",
+                    "session_id": session_id or ""
+                })
+                await websocket.send_json({"type": "sources", "sources": [], "session_id": session_id or ""})
                 continue
 
             async for chunk in rag_engine.query_stream(message, session_id):
@@ -221,12 +272,22 @@ async def book_meeting(request: BookingRequest):
 
 
 async def _dispatch_voice(request: Request) -> Dict:
-    """Parse webhook body regardless of content-type and dispatch."""
+    """Parse webhook body, verify Vapi HMAC signature if secret is set, then dispatch."""
+    body = b""
     try:
         body = await request.body()
         payload = json.loads(body) if body else {}
     except Exception:
         payload = {}
+
+    secret = os.getenv("VAPI_SERVER_SECRET")
+    if secret:
+        import hmac as _hmac, hashlib
+        sig = request.headers.get("x-vapi-signature", "")
+        expected = _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
     return await voice_handler.handle_webhook(payload)
 
 

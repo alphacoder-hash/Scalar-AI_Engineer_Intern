@@ -15,43 +15,37 @@
 │                   INTERFACE LAYER                          │
 │  ┌──────────────┐              ┌────────────────┐          │
 │  │    Vapi      │              │   React SPA    │          │
-│  │ (Orchestrator)│             │   Frontend     │          │
+│  │ (Orchestrator)│             │   (Vercel)     │          │
 │  │              │              │                │          │
-│  │ - Twilio     │              │ - Axios client │          │
-│  │ - Deepgram   │              │ - Websocket    │          │
-│  │ - ElevenLabs │              └────────┬───────┘          │
+│  │ - Twilio     │              │ - axios POST   │          │
+│  │ - Deepgram   │              │ - WebSocket    │          │
+│  │   Nova-2 STT │              │   /chat/stream │          │
+│  │ - ElevenLabs │              │ - BookingModal │          │
+│  │   TTS (Adam) │              └────────┬───────┘          │
 │  └──────┬───────┘                       │                  │
 └─────────┼───────────────────────────────┼──────────────────┘
-          │                               │
-          │    Webhook / Function Call    │    HTTP/WS
-          │                               │
+          │  webhook tool-call/result      │  HTTP / WS
 ┌─────────▼───────────────────────────────▼──────────────────┐
-│                  BACKEND LAYER (FastAPI)                    │
+│              BACKEND LAYER — FastAPI (Railway)              │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │              voice_handler.py                      │    │
-│  │  - Handle Vapi webhooks                            │    │
-│  │  - Route function calls                            │    │
-│  │  - Log metrics                                     │    │
-│  └──────┬─────────────────────────────────┬───────────┘    │
-│         │                                  │                │
-│  ┌──────▼─────────┐              ┌────────▼─────────┐     │
-│  │  rag_engine.py │              │ calendar_manager │     │
-│  │                │              │      .py         │     │
-│  │ - Query RAG    │              │                  │     │
-│  │ - Stream resp  │              │ - Check slots    │     │
-│  │ - Memory mgmt  │              │ - Book meetings  │     │
-│  └────────┬───────┘              └────────┬─────────┘     │
-└───────────┼──────────────────────────────┼────────────────┘
-            │                               │
-┌───────────▼──────────────────────────────▼────────────────┐
-│                    DATA LAYER                              │
-│  ┌─────────────┐   ┌──────────────┐   ┌───────────────┐  │
-│  │  ChromaDB   │   │  OpenAI API  │   │ Google Cal API│  │
-│  │             │   │              │   │               │  │
-│  │ - Embeddings│   │ - GPT-4o     │   │ - Free/busy   │  │
-│  │ - Vector    │   │ - Embeddings │   │ - Booking     │  │
-│  │   search    │   │              │   │               │  │
-│  └─────────────┘   └──────────────┘   └───────────────┘  │
+│  │  voice_handler.py  │  app.py (rate-limit, routing) │    │
+│  └──────┬──────────────────────────────┬──────────────┘    │
+│         │                              │                    │
+│  ┌──────▼────────────┐      ┌─────────▼──────────┐        │
+│  │  rag_engine_groq  │      │  calendar_calcom   │        │
+│  │                   │      │                    │        │
+│  │ ChromaDB          │      │ Cal.com v2 API     │        │
+│  │ cosine similarity │      │ /slots/available   │        │
+│  │ k=12 hybrid       │      │ /bookings          │        │
+│  │                   │      │ fallback generator │        │
+│  │ Groq API          │      └────────────────────┘        │
+│  │ llama-3.3-70b     │                                     │
+│  │ max_tokens=1200   │                                     │
+│  │                   │                                     │
+│  │ sentence-tfmrs    │                                     │
+│  │ all-MiniLM-L6-v2  │                                     │
+│  │ (local, no cost)  │                                     │
+│  └───────────────────┘                                     │
 └────────────────────────────────────────────────────────────┘
 ```
 

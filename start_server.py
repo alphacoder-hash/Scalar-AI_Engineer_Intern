@@ -10,9 +10,14 @@ load_dotenv()
 def ingest_if_needed():
     persist_dir = os.getenv("CHROMA_PERSIST_DIR", "chroma_db")
     chroma_path = Path(persist_dir)
-    
-    # Check if vector store already has data
-    if chroma_path.exists() and any(chroma_path.glob("**/*.bin")):
+
+    # ChromaDB v0.4+ stores data as chroma.sqlite3 + parquet files
+    already_built = (
+        chroma_path.exists() and
+        (chroma_path / "chroma.sqlite3").exists() and
+        any(chroma_path.rglob("*.parquet"))
+    )
+    if already_built:
         print("Vector store found, skipping ingestion.")
         return True
     
