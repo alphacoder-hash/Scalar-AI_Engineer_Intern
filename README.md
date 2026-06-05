@@ -7,9 +7,9 @@ Live AI persona that answers calls and chat, answers questions about Vaibhav's b
 | Channel | URL / Number |
 |---------|-------------|
 | **Voice Agent** | `+19868009622` (Vapi + ElevenLabs + Deepgram) |
-| **Chat Interface** | `https://scalar-ai-engineer.vercel.app` |
-| **Backend API** | `https://scalar-aiengineerintern-production.up.railway.app` |
-| **Health check** | `https://scalar-aiengineerintern-production.up.railway.app/health` |
+| **Chat Interface** | `https://scalar-ai-engineer-intern.vercel.app` |
+| **Backend API** | `https://web-production-21df0.up.railway.app` |
+| **Health check** | `https://web-production-21df0.up.railway.app/health` |
 
 > Both voice and chat are live at submission time. Call the number or open the chat URL.
 
