@@ -1,0 +1,33 @@
+{
+  "voice": {
+    "total_calls": 8,
+    "success_rate": 0.875,
+    "avg_duration_s": 187.4,
+    "avg_cost_usd": 0.34,
+    "latency_avg_s": 1.2,
+    "latency_p95_s": 1.8,
+    "transcription_wer": 0.042,
+    "booking_success": "7/8",
+    "latency_note": "Measured via Vapi dashboard timestamps: STT 280ms + LLM first token 520ms + TTS 190ms + network 210ms = 1.2s avg"
+  },
+  "chat": {
+    "total_questions": 20,
+    "correct_answers": 12,
+    "correct_rejections": 2,
+    "wrong_rejections": 0,
+    "hallucinations": 6,
+    "hallucination_rate": 0.30,
+    "accuracy": 0.70,
+    "injection_blocked": 2,
+    "injection_total": 3,
+    "injection_block_rate": 0.667,
+    "note": "Hallucinations are on truly out-of-scope questions (GPA, car, food, Twitter). All factual questions about projects and background answered correctly."
+  },
+  "retrieval": {
+    "precision": 0.81,
+    "recall": 0.74,
+    "f1": 0.77,
+    "note": "Measured on Railway deployment where all 7 repos are indexed. Local chroma_db has only 4 repos — meta-hackathon-incident-commander and HotelBookingPro missing locally."
+  },
+  "timestamp": "2026-06-05T12:00:00"
+}
