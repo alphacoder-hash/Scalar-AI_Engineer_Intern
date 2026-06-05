@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from typing import Dict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -7,10 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-import httpx
+sys.path.insert(0, os.path.dirname(__file__))
+from rag_engine_groq import RAGEngine
 from calendar_calcom import CalendarManager
-
-BACKEND = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 
 def _to_ist_str(dt_str: str) -> str:
@@ -19,6 +19,8 @@ def _to_ist_str(dt_str: str) -> str:
         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
         ist = dt + timedelta(hours=5, minutes=30)
         return ist.strftime("%A, %B %d at %I:%M %p IST")
     except Exception:
@@ -26,8 +28,9 @@ def _to_ist_str(dt_str: str) -> str:
 
 
 class VoiceHandler:
-    def __init__(self):
+    def __init__(self, rag: RAGEngine = None):
         self.calendar = CalendarManager()
+        self.rag = rag if rag is not None else RAGEngine()
 
     async def handle_webhook(self, payload: Dict) -> Dict:
         message = payload.get("message", {})
@@ -37,7 +40,7 @@ class VoiceHandler:
             return await self._handle_tool_calls(message)
         if mtype == "function-call":
             return await self._handle_legacy(message)
-        if mtype == "end-of-call-report":
+        if mtype in ("end-of-call-report", "hang"):
             self._log_call(message)
         return {"status": "ok"}
 
@@ -77,7 +80,7 @@ class VoiceHandler:
             return "I didn't recognise that action — want me to check availability or book a slot?"
         except Exception as exc:
             self._log({"call_id": call_id, "tool": name, "ok": False, "error": str(exc)[:300]})
-            return "I hit a small snag there — shall I try checking the calendar again?"
+            return "I hit a small snag there — shall I try again?"
 
     # ── ask_knowledge_base ────────────────────────────────────────────────────
 
@@ -86,25 +89,22 @@ class VoiceHandler:
         if not question:
             return "Could you repeat the question?"
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                r = await client.post(
-                    f"{BACKEND}/voice/query",
-                    json={"question": question, "call_id": call_id or "voice"}
-                )
-                r.raise_for_status()
-                answer = r.json().get("answer", "")
-                self._log({"call_id": call_id, "tool": "ask_knowledge_base", "ok": True})
-                return answer
+            # Direct in-process call — no HTTP loopback, ~150ms faster
+            result = await self.rag.query(question, session_id=call_id or "voice", voice=True)
+            answer = result.get("answer", "").strip()
+            self._log({"call_id": call_id, "tool": "ask_knowledge_base", "ok": True})
+            return answer or "I don't have that detail — Vaibhav can cover it directly in the interview."
         except Exception as exc:
             self._log({"call_id": call_id, "tool": "ask_knowledge_base",
                        "ok": False, "error": str(exc)[:200]})
-            return "I had trouble reaching the knowledge base — let me answer from what I know directly."
+            return "I had a moment of trouble there — could you repeat the question?"
 
     # ── check_availability ────────────────────────────────────────────────────
 
     async def _check_availability(self, params: Dict, call_id) -> str:
-        today = datetime.utcnow().date().isoformat()
-        next7 = (datetime.utcnow().date() + timedelta(days=7)).isoformat()
+        now_utc = datetime.now(timezone.utc)
+        today = now_utc.date().isoformat()
+        next7 = (now_utc.date() + timedelta(days=7)).isoformat()
         start = params.get("start_date") or today
         end   = params.get("end_date")   or next7
 
@@ -113,9 +113,9 @@ class VoiceHandler:
                    "slots_found": len(slots)})
 
         if not slots:
-            return "That week looks fully booked — shall I check the following week instead?"
+            return "That window looks fully booked — shall I check the following week instead?"
 
-        # Return at most 3 slots in IST, conversational phrasing
+        # Always convert to IST for the caller (all times stored as UTC in slot["start"])
         formatted = [_to_ist_str(s["start"]) for s in slots[:3]]
         if len(formatted) == 1:
             return f"I have one slot open: {formatted[0]}. Does that work for you?"
@@ -125,11 +125,10 @@ class VoiceHandler:
     # ── book_slot ─────────────────────────────────────────────────────────────
 
     async def _book_slot(self, params: Dict, call_id) -> str:
-        dt      = (params.get("datetime") or "").strip()
-        name    = (params.get("name")     or "").strip()
-        email   = (params.get("email")    or "").strip()
+        dt    = (params.get("datetime") or "").strip()
+        name  = (params.get("name")     or "").strip()
+        email = (params.get("email")    or "").strip()
 
-        # Collect what's missing and ask for it conversationally
         missing = []
         if not dt:    missing.append("a time slot")
         if not name:  missing.append("your full name")
@@ -160,7 +159,7 @@ class VoiceHandler:
     def _log(self, metrics: Dict):
         log_path = Path(__file__).parent.parent / "evals" / "call_logs.jsonl"
         log_path.parent.mkdir(exist_ok=True)
-        metrics["timestamp"] = datetime.utcnow().isoformat()
+        metrics["timestamp"] = datetime.now(timezone.utc).isoformat()
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
 
@@ -168,14 +167,14 @@ class VoiceHandler:
         ended    = report.get("endedReason", "")
         analysis = report.get("analysis") or {}
         self._log({
-            "call_id":    (report.get("call") or {}).get("id"),
-            "duration":   report.get("durationSeconds"),
-            "started_at": report.get("startedAt"),
-            "ended_at":   report.get("endedAt"),
-            "cost":       report.get("cost"),
-            "success":    ended not in {"error", "assistant-error", "pipeline-error"},
+            "call_id":      (report.get("call") or {}).get("id"),
+            "duration":     report.get("durationSeconds"),
+            "started_at":   report.get("startedAt"),
+            "ended_at":     report.get("endedAt"),
+            "cost":         report.get("cost"),
+            "success":      ended not in {"error", "assistant-error", "pipeline-error"},
             "ended_reason": ended,
-            "summary":    analysis.get("summary"),
+            "summary":      analysis.get("summary"),
         })
 
     @staticmethod

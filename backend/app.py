@@ -1,8 +1,4 @@
 import sys
-if sys.platform == "win32":
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 import re
 import json
 import time
@@ -10,16 +6,19 @@ import collections
 from datetime import datetime, timedelta
 from pathlib import Path
 
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict
-import os
-from dotenv import load_dotenv
 
 load_dotenv()
 
-import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from rag_engine_groq import RAGEngine
@@ -38,7 +37,8 @@ app.add_middleware(
 
 rag_engine = RAGEngine()
 calendar_manager = CalendarManager()
-voice_handler = VoiceHandler()
+# Share the already-loaded RAGEngine instance — avoids loading the model twice
+voice_handler = VoiceHandler(rag=rag_engine)
 
 # ── Rate limiter (10 requests / 60s per IP) ───────────────────────────────────
 _RATE_WINDOW  = 60
@@ -251,22 +251,6 @@ async def chat_stream(websocket: WebSocket):
                 await websocket.send_json(chunk)
     except WebSocketDisconnect:
         pass
-
-
-@app.post("/voice/query")
-async def voice_query(request: Request):
-    """Called by the ask_knowledge_base tool from Vapi.
-    Runs RAG with voice=True and returns a spoken-ready answer."""
-    try:
-        body = await request.json()
-        question = (body.get("question") or "").strip()
-        session_id = body.get("session_id") or body.get("call_id") or "voice"
-        if not question:
-            return {"answer": "I didn't catch that — could you repeat the question?"}
-        result = await rag_engine.query(question, session_id=session_id, voice=True)
-        return {"answer": result["answer"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/voice/query")

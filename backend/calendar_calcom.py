@@ -8,7 +8,6 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 import httpx
 
-# Discovered via API: cal.com/aryan-pandey-wpce3h/30min
 _KNOWN_EVENT_TYPE_ID = 5906114
 _KNOWN_EVENT_SLUG = "30min"
 _CAL_API_VERSION = "2024-08-13"
@@ -17,7 +16,7 @@ _CAL_API_VERSION = "2024-08-13"
 class CalendarManager:
     def __init__(self):
         self.api_key = os.getenv("CALCOM_API_KEY")
-        self.username = os.getenv("CALCOM_USERNAME", "aryan-pandey-wpce3h")
+        self.username = os.getenv("CALCOM_USERNAME", "")
         self.base_url = "https://api.cal.com/v2"
         self.event_type_id = _KNOWN_EVENT_TYPE_ID
         self.event_slug = _KNOWN_EVENT_SLUG
@@ -134,22 +133,30 @@ class CalendarManager:
         return slots
 
     def _generate_slots(self, start_date: str, duration_minutes: int = 30) -> List[Dict]:
+        now_utc = datetime.now(timezone.utc)
         try:
-            start = datetime.fromisoformat(start_date.replace("Z", ""))
+            # Ensure fromisoformat gets a datetime, not just a date (Python 3.10 compat)
+            s = start_date.replace("Z", "+00:00")
+            if len(s) == 10:          # bare YYYY-MM-DD
+                s += "T00:00:00+00:00"
+            start = datetime.fromisoformat(s)
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            else:
+                start = start.astimezone(timezone.utc)
         except Exception:
-            start = datetime.now(timezone.utc).replace(tzinfo=None)
+            start = now_utc
 
         slots, current, days_checked = [], start, 0
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         while len(slots) < 5 and days_checked < 14:
-            if current.weekday() < 5:
-                for hour in [10, 14, 16]:
+            if current.weekday() < 5:          # Mon–Fri only
+                for hour in [10, 14, 16]:      # 10 AM, 2 PM, 4 PM UTC
                     t = current.replace(hour=hour, minute=0, second=0, microsecond=0)
-                    if t > now:
+                    if t > now_utc:
                         slots.append({
-                            "start": t.isoformat(),
-                            "end": (t + timedelta(minutes=duration_minutes)).isoformat(),
+                            "start": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "end":   (t + timedelta(minutes=duration_minutes)).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "formatted": t.strftime("%A, %B %d at %I:%M %p UTC"),
                         })
                     if len(slots) >= 5:
@@ -247,4 +254,4 @@ class CalendarManager:
         }
 
     def is_ready(self) -> bool:
-        return self.api_key is not None
+        return bool(self.api_key and self.username)
