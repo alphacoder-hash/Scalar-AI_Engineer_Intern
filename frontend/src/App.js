@@ -32,8 +32,10 @@ function MD({ text }) {
 // ── booking intent ────────────────────────────────────────────────────────────
 function isBooking(t) {
   t = t.trim().toLowerCase();
-  if (/^(book|schedule|set up a call|check (your|his) (availability|calendar)|when (are you|is (he|vaibhav)) (free|available))/.test(t)) return true;
-  if (t.length < 55 && /\b(book|schedule|availability|interview slot)\b/.test(t)) return true;
+  // Explicit scheduling phrases regardless of length
+  if (/\b(book|schedule|set up|arrange)\b.{0,35}\b(interview|call|meeting|slot|time)\b/.test(t)) return true;
+  // Short unambiguous checks
+  if (t.length < 70 && /\b(check (your |his )?(availability|calendar)|when (are you|is (he|vaibhav)) (free|available)|find a time|interview slot)\b/.test(t)) return true;
   return false;
 }
 
@@ -182,8 +184,64 @@ export default function App() {
     }
 
     setLoading(true);
+    // Add a placeholder that we'll fill chunk by chunk
     setMsgs(prev => [...prev, { role:'assistant', content:'', thinking:true }]);
 
+    const wsUrl = BACKEND.replace(/^http/, 'ws') + '/chat/stream';
+    let ws;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch(_) {
+      ws = null;
+    }
+
+    if (ws) {
+      let opened = false;
+      ws.onopen = () => {
+        opened = true;
+        ws.send(JSON.stringify({ message: text, session_id: sessionRef.current }));
+      };
+      ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === 'content') {
+          setMsgs(prev => {
+            const rest = prev.filter(m => !m.thinking);
+            const last = rest[rest.length - 1];
+            if (last && last.role === 'assistant' && !last.thinking) {
+              return [...rest.slice(0,-1), { ...last, content: last.content + data.content }];
+            }
+            return [...rest, { role:'assistant', content: data.content }];
+          });
+        } else if (data.type === 'sources') {
+          if (data.session_id) sessionRef.current = data.session_id;
+          setMsgs(prev => {
+            const copy = [...prev];
+            const idx  = copy.map(m=>m.role).lastIndexOf('assistant');
+            if (idx !== -1) copy[idx] = { ...copy[idx], sources: data.sources, thinking: false };
+            return copy;
+          });
+          setLoading(false);
+          ws.close();
+        } else if (data.type === 'error') {
+          setMsgs(prev => {
+            const rest = prev.filter(m => !m.thinking);
+            return [...rest, { role:'assistant', content: data.content || 'Something went wrong.' }];
+          });
+          setLoading(false);
+          ws.close();
+        }
+      };
+      ws.onerror = () => {
+        if (!opened) fallbackHttp(text);
+        else { setLoading(false); ws.close(); }
+      };
+      ws.onclose = () => { setLoading(false); };
+    } else {
+      fallbackHttp(text);
+    }
+  }
+
+  async function fallbackHttp(text) {
     try {
       const r = await axios.post(`${BACKEND}/chat`, {
         message: text,
