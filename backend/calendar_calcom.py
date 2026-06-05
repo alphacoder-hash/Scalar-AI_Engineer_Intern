@@ -61,19 +61,26 @@ class CalendarManager:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _as_utc_iso(dt_str: str) -> str:
+    def _to_utc_z(dt_str: str) -> str:
+        """Normalise any datetime string to ISO-8601 UTC with Z suffix —
+        the format Cal.com v2 requires for both slots and bookings."""
         dt_str = (dt_str or "").strip()
         if not dt_str:
-            return datetime.now(timezone.utc).isoformat()
-        if len(dt_str) == 10:
-            return datetime.fromisoformat(dt_str).replace(
-                tzinfo=timezone.utc).isoformat()
-        if dt_str.endswith("Z"):
-            return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).isoformat()
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if len(dt_str) == 10:                          # bare date e.g. 2026-06-15
+            return dt_str + "T00:00:00Z"
+        dt_str = dt_str.replace("Z", "+00:00")
         dt = datetime.fromisoformat(dt_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.isoformat()
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # keep old name as alias so nothing else breaks
+    @staticmethod
+    def _as_utc_iso(dt_str: str) -> str:
+        return CalendarManager._to_utc_z(dt_str)
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
@@ -156,62 +163,86 @@ class CalendarManager:
 
     async def book_slot(self, datetime_str: str, attendee_name: str,
                         attendee_email: str, duration_minutes: int = 30) -> Dict:
-        dt_norm = self._as_utc_iso(datetime_str)
-        start_time = datetime.fromisoformat(dt_norm)
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=timezone.utc)
-        end_time = start_time + timedelta(minutes=duration_minutes)
-        formatted = start_time.strftime("%A, %B %d at %I:%M %p UTC")
+        start_z   = self._to_utc_z(datetime_str)     # always ends with Z
+        start_time = datetime.fromisoformat(start_z.replace("Z", "+00:00"))
+        end_time   = start_time + timedelta(minutes=duration_minutes)
+        # Show in IST for the confirmation message
+        ist_time   = start_time + timedelta(hours=5, minutes=30)
+        formatted  = ist_time.strftime("%A, %B %d at %I:%M %p IST")
 
         if self.api_key and self.event_type_id:
+            payload = {
+                "eventTypeId": self.event_type_id,
+                "start": start_z,                    # Cal.com v2 requires Z suffix
+                "attendee": {
+                    "name": attendee_name,
+                    "email": attendee_email,
+                    "timeZone": "Asia/Kolkata",       # IST — invite shows correct local time
+                    "language": "en",                 # required for Cal.com to send invite email
+                },
+                "metadata": {"source": "sam-ai-persona"},
+            }
             try:
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         f"{self.base_url}/bookings",
                         headers=self._headers,
-                        json={
-                            "eventTypeId": self.event_type_id,
-                            "start": start_time.isoformat(),
-                            "attendee": {
-                                "name": attendee_name,
-                                "email": attendee_email,
-                                "timeZone": "UTC",
-                            },
-                            "metadata": {"source": "sam-ai-persona"},
-                        },
+                        json=payload,
                         timeout=15.0,
                     )
                     if response.status_code in [200, 201]:
                         booking_data = response.json().get("data", {})
+                        uid = booking_data.get("uid") or booking_data.get("id", "")
                         return {
-                            "id": booking_data.get("id") or booking_data.get("uid"),
+                            "id": uid,
                             "link": f"https://cal.com/{self.username}/{self.event_slug}",
-                            "start": start_time.isoformat(),
-                            "end": end_time.isoformat(),
+                            "start": start_z,
+                            "end": end_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "formatted": formatted,
                             "status": "confirmed",
                             "source": "calcom",
                             "message": (
                                 f"Confirmed! Interview booked for {formatted}. "
-                                f"Calendar invite sent to {attendee_email}."
+                                f"A calendar invite has been sent to {attendee_email}."
                             ),
                         }
-                    print(f"Cal.com booking error: {response.status_code} {response.text[:300]}")
+                    # Log the full error so we can debug
+                    error_body = response.text[:500]
+                    print(f"Cal.com booking error: {response.status_code} — {error_body}")
+                    return {
+                        "status": "failed",
+                        "source": "calcom",
+                        "message": (
+                            f"Booking failed (Cal.com {response.status_code}). "
+                            "Please try booking directly at "
+                            f"https://cal.com/{self.username}/{self.event_slug}"
+                        ),
+                    }
             except Exception as e:
                 print(f"Cal.com booking exception: {e}")
+                return {
+                    "status": "failed",
+                    "source": "calcom",
+                    "message": (
+                        f"Could not reach Cal.com ({e}). "
+                        "Please book directly at "
+                        f"https://cal.com/{self.username}/{self.event_slug}"
+                    ),
+                }
 
-        # Fallback
+        # No API key — be honest, don't pretend to confirm
         return {
-            "id": f"booking-{int(start_time.timestamp())}",
+            "id": "",
             "link": f"https://cal.com/{self.username}/{self.event_slug}",
-            "start": start_time.isoformat(),
-            "end": end_time.isoformat(),
+            "start": start_z,
+            "end": end_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "formatted": formatted,
-            "status": "confirmed",
+            "status": "no_api_key",
             "source": "fallback",
             "message": (
-                f"Confirmed! Interview booked for {formatted}. "
-                f"Calendar invite sent to {attendee_email} (fallback mode)."
+                f"Please book directly at "
+                f"https://cal.com/{self.username}/{self.event_slug} — "
+                "the calendar API key is not configured."
             ),
         }
 

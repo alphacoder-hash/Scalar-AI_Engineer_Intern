@@ -91,62 +91,24 @@ class DataIngestion:
         self._add(text, {"source": "resume", "type": "resume",
                          "candidate": os.getenv("CANDIDATE_NAME", "Vaibhav Pandey"),
                          "file": file_path})
-        # Also always include the structured summary so critical facts are always retrievable
-        self._add_profile_summary()
         print(f"Resume ingested: {len(text)} chars")
 
     def _add_profile_summary(self):
-        """Structured ground-truth document — always in the index."""
+        """Structured ground-truth document built from ENV vars only — no hardcoded facts.
+        Only used when resume PDF is missing. If PDF is present, this is skipped.
+        """
+        candidate = os.getenv("CANDIDATE_NAME", "Vaibhav Pandey")
+        github_username = os.getenv("GITHUB_USERNAME", "")
+        repos = os.getenv("GITHUB_REPOS", "")
         self._add(
-            """CANDIDATE PROFILE — Vaibhav Pandey (authoritative ground truth)
-
-CONTACT
-  Email: Vpandey1707@gmail.com
-  LinkedIn: linkedin.com/in/vaibhav-pandey-4532b8290
-  GitHub: github.com/alphacoder-hash
-  LeetCode: max rating 1713 | CodeChef: 4-star, max rating 1870
-
-EDUCATION
-  B.Tech Computer Science, Class of 2027, Vadodara, India
-
-EXPERIENCE
-  Centific Premier Hackathon 2.0 — AI Agent Development Contributor (Apr–May 2026, Hyderabad)
-  • Built an AI-powered Business Analyst Agent inside an Agentic SDLC platform
-  • Ingested PDF, DOCX, PPTX, email, and meeting-transcript inputs
-  • Auto-extracted requirements → generated Features, Epics, User Stories
-  • Built Human-in-the-Loop (HITL) validation pipelines with confidence scoring
-  • Stack: Python, LLM APIs, FastAPI, document parsers
-
-TECHNICAL SKILLS
-  Languages   : Python, TypeScript, JavaScript (ES6+), Java, C++
-  AI/ML       : Prompt engineering, RAG, LLM-powered apps, AI evaluation workflows,
-                HITL validation, scikit-learn, TF-IDF, semantic similarity, vector DBs
-  Frameworks  : FastAPI, React.js, Node.js, Express.js, Django, Streamlit
-  Infra/Tools : Docker, Git, GitHub Actions, Vercel, ChromaDB, Gradio, Hugging Face
-  Core CS     : DSA, OOP, DBMS, OS, Computer Networks
-
-COMPETITIVE PROGRAMMING
-  CodeChef 4-star, max 1870 | LeetCode max 1713
-
-HACKATHONS & AWARDS
-  • Smart India Hackathon (SIH) 2025 — institute-level qualifier (200+ teams)
-  • Grand Finalist — PU Code Hackathon 2.0 and 3.0
-  • Centific Premier Hackathon 2.0 — participant (Hyderabad, 2026)
-  • Vadodara Hackathon 6.0 — participant
-
-WHY VAIBHAV FOR SCALER AI ENGINEER
-  1. Ships production AI systems (IncidentCommander live on Hugging Face Spaces)
-  2. Built AI evaluation frameworks — directly relevant to Scaler's AI product needs
-  3. HITL pipeline experience from Centific hackathon — exactly what AI teams run
-  4. Strong Python + LLM stack: FastAPI, RAG, ChromaDB, Groq, OpenAI
-  5. Full-stack capable (TypeScript, React) — can own features end-to-end
-  6. Competitive programmer (LeetCode 1713, CodeChef 1870) — strong CS fundamentals
-  7. Proven under pressure: ships working demos at hackathons (IncidentCommander, HotelBookingPro)
-""",
+            f"Candidate: {candidate}\n"
+            f"GitHub: github.com/{github_username}\n"
+            f"Repos indexed: {repos}\n"
+            "Note: Full profile details are in the resume PDF and GitHub repos indexed above.",
             {"source": "resume", "type": "profile_summary",
-             "candidate": os.getenv("CANDIDATE_NAME", "Vaibhav Pandey"), "file": "profile_summary"}
+             "candidate": candidate, "file": "profile_summary"}
         )
-        print("Profile summary added")
+        print("Minimal profile summary added (resume PDF not found)")
 
     # ── GitHub ────────────────────────────────────────────────────────────────
 

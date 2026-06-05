@@ -253,6 +253,61 @@ async def chat_stream(websocket: WebSocket):
         pass
 
 
+@app.post("/voice/query")
+async def voice_query(request: Request):
+    """Called by the ask_knowledge_base tool from Vapi.
+    Runs RAG with voice=True and returns a spoken-ready answer."""
+    try:
+        body = await request.json()
+        question = (body.get("question") or "").strip()
+        session_id = body.get("session_id") or body.get("call_id") or "voice"
+        if not question:
+            return {"answer": "I didn't catch that — could you repeat the question?"}
+        result = await rag_engine.query(question, session_id=session_id, voice=True)
+        return {"answer": result["answer"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/voice/query")
+async def voice_query(request: Request):
+    """
+    Dual-mode RAG endpoint:
+    1. Called directly by ask_knowledge_base tool (Vapi server URL) with Vapi tool-call payload
+    2. Called internally by voice_handler with {"question": ..., "call_id": ...}
+    """
+    try:
+        body = await request.json()
+
+        # Mode 1: Vapi tool-call payload
+        message = body.get("message", {})
+        if message.get("type") == "tool-calls":
+            results = []
+            for tc in message.get("toolCallList", []):
+                tc_id = tc.get("id", "")
+                func = tc.get("function", {})
+                raw = func.get("arguments", {})
+                params = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+                question = (params.get("question") or "").strip()
+                call_id = (message.get("call") or {}).get("id", "voice")
+                if not question:
+                    results.append({"toolCallId": tc_id, "result": "Could you repeat that?"})
+                    continue
+                result = await rag_engine.query(question, session_id=call_id, voice=True)
+                results.append({"toolCallId": tc_id, "result": result["answer"]})
+            return {"results": results}
+
+        # Mode 2: Internal call from voice_handler
+        question = (body.get("question") or "").strip()
+        session_id = body.get("call_id") or "voice"
+        if not question:
+            return {"answer": "Could you repeat that question?"}
+        result = await rag_engine.query(question, session_id=session_id, voice=True)
+        return {"answer": result["answer"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/availability")
 async def get_availability(request: AvailabilityRequest):
     try:

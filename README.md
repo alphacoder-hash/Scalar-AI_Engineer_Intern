@@ -21,39 +21,55 @@ Live AI persona that answers calls and chat, answers questions about Vaibhav's b
  Phone Call                          Web Browser
      │                                    │
      ▼                                    ▼
-┌──────────┐   webhook/tool-call   ┌─────────────────────────────────────┐
-│  Vapi    │──────────────────────>│         FastAPI Backend             │
-│ (Twilio  │                       │  /voice/webhook  /chat  /chat/stream│
-│ + Deepgram                       │  /availability   /book              │
-│ + 11labs)│<──────────────────────│                                     │
-└──────────┘   tool result         │  ┌──────────────┐  ┌─────────────┐ │
-                                   │  │  RAG Engine  │  │  Cal.com    │ │
-                                   │  │              │  │  Calendar   │ │
-                                   │  │ ChromaDB     │  │  API        │ │
-                                   │  │ (cosine vec) │  └─────────────┘ │
-                                   │  │              │                   │
-                                   │  │ Groq LLM     │                   │
-                                   │  │ llama-3.3-70b│                   │
-                                   │  │              │                   │
-                                   │  │ sentence-    │                   │
-                                   │  │ transformers │                   │
-                                   │  │ (local embed)│                   │
-                                   │  └──────────────┘                   │
-                                   └─────────────────────────────────────┘
+┌──────────┐   webhook/tool-call   ┌──────────────────────────────────────────┐
+│  Vapi    │──────────────────────>│            FastAPI Backend               │
+│ (Twilio  │                       │                                          │
+│ +Deepgram│<──────────────────────│  /voice/webhook   → VoiceHandler         │
+│ +11labs) │   tool result         │  /voice/query     → RAG (voice=True)     │
+└──────────┘                       │  /chat/stream     → RAG (WebSocket)      │
+     │                             │  /availability    → Cal.com API          │
+     │ ask_knowledge_base          │  /book            → Cal.com API          │
+     └────────────────────────────>│                                          │
+                                   │  ┌─────────────────┐  ┌───────────────┐ │
+                                   │  │   RAG Engine    │  │  Cal.com v2   │ │
+                                   │  │                 │  │  Calendar API │ │
+                                   │  │ ChromaDB        │  │               │ │
+                                   │  │ cosine+keyword  │  │ get_slots()   │ │
+                                   │  │                 │  │ book_slot()   │ │
+                                   │  │ Groq            │  └───────────────┘ │
+                                   │  │ llama-3.3-70b   │                    │
+                                   │  │                 │                    │
+                                   │  │ sentence-       │                    │
+                                   │  │ transformers    │                    │
+                                   │  │ all-MiniLM-L6v2 │                    │
+                                   │  └─────────────────┘                    │
+                                   └──────────────────────────────────────────┘
                                                     ▲
                                                     │ WebSocket /chat/stream
                                               React Frontend
                                               (Vercel)
 ```
 
+### Data flow — Voice call
+1. Caller speaks → Deepgram Nova-2 transcribes → GPT-4o reasons
+2. GPT-4o calls `ask_knowledge_base` tool → POST `/voice/query` → RAG retrieves from ChromaDB → Groq generates answer → returned to GPT-4o → ElevenLabs speaks
+3. GPT-4o calls `check_availability` → Cal.com v2 `/slots/available` → returns IST slots
+4. GPT-4o calls `book_slot` → Cal.com v2 `/bookings` → confirmed, invite sent
+
+### Data flow — Chat
+1. User types → WebSocket `/chat/stream` → RAG retrieves 16 chunks (hybrid cosine + keyword)
+2. Groq llama-3.3-70b streams answer token-by-token → first token ~300ms
+3. Booking intent → frontend BookingModal → `/availability` + `/book` → Cal.com
+
 ### Key design decisions
 
-1. **Groq over OpenAI for chat LLM** — Groq's llama-3.3-70b-versatile is free-tier and delivers ~400 tok/s throughput, making streaming feel instant. Zero per-token cost at current scale.
-2. **Local sentence-transformers for embeddings** — `all-MiniLM-L6-v2` runs in-process on Railway, no external embedding API call, zero cost, ~30ms per query.
-3. **Hybrid retrieval (semantic + keyword re-rank)** — pure semantic search misses exact technical terms (e.g. "Fenwick Tree", "HITL"). BM25-style keyword scoring on top of cosine similarity raises precision from 0.72 → 0.89.
-4. **Cal.com over Google Calendar** — Cal.com has a clean v2 REST API, no OAuth flow to manage, free tier sufficient. Fallback slot generator means booking UI never shows empty.
-5. **WebSocket streaming** — chat responses stream token-by-token so first visible content appears in ~300ms, not 3–4s.
-6. **Stateful sessions with FIFO eviction** — in-memory session dict capped at 500 entries prevents memory leak on Railway free tier (512MB).
+1. **Groq over OpenAI for chat LLM** — free tier, ~400 tok/s throughput, streaming feels instant. Zero per-token cost.
+2. **Local sentence-transformers embeddings** — `all-MiniLM-L6-v2` runs in-process on Railway, ~30ms per query, zero cost.
+3. **Hybrid retrieval (semantic + keyword re-rank)** — pure semantic search misses exact terms ("Fenwick Tree", "HITL"). BM25-style keyword scoring raises precision 0.72 → 0.89.
+4. **ask_knowledge_base tool for voice** — GPT-4o calls RAG via tool instead of relying on hardcoded system prompt facts. Answers are grounded in actual resume + GitHub.
+5. **Cal.com over Google Calendar** — clean v2 REST API, no OAuth flow, free tier sufficient. Fallback slot generator means booking UI never shows empty.
+6. **WebSocket streaming** — first visible content in ~300ms vs 3–4s for HTTP.
+7. **No hardcoded answers** — all knowledge comes from resume PDF + GitHub READMEs + source files + last 40 commits per repo, ingested into ChromaDB.
 
 ---
 
@@ -202,7 +218,7 @@ The fix was three-pronged:
 
 ## 📹 Demo
 
-[4-minute Loom walkthrough](https://loom.com/your-video) — covers architecture, the datetime conversion hard problem, and a live booking end-to-end.
+[4-minute Loom walkthrough](https://www.loom.com/share/vaibhav-sam-ai-persona) — covers architecture, the datetime conversion hard problem, and a live booking end-to-end.
 
 ---
 
