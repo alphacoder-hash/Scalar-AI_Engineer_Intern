@@ -315,6 +315,10 @@ TOOLS = [
                 "required": ["question"]
             }
         },
+        "messages": [
+            {"type": "request-start",    "content": "Let me check that for you."},
+            {"type": "request-response-delayed", "content": "Just a moment, looking that up now.", "timingMilliseconds": 2000},
+        ],
         "server": {"url": f"{BACKEND}/voice/webhook"}
     },
     {
@@ -343,6 +347,10 @@ TOOLS = [
                 "required": ["start_date", "end_date"]
             }
         },
+        "messages": [
+            {"type": "request-start",    "content": "Let me pull up the calendar."},
+            {"type": "request-response-delayed", "content": "Almost there, checking the slots now.", "timingMilliseconds": 2000},
+        ],
         "server": {"url": f"{BACKEND}/voice/webhook"}
     },
     {
@@ -375,6 +383,10 @@ TOOLS = [
                 "required": ["datetime", "name", "email"]
             }
         },
+        "messages": [
+            {"type": "request-start",    "content": "Booking that now."},
+            {"type": "request-response-delayed", "content": "Just confirming the slot, one sec.", "timingMilliseconds": 2000},
+        ],
         "server": {"url": f"{BACKEND}/voice/webhook"}
     }
 ]
