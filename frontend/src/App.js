@@ -113,7 +113,7 @@ function BookingModal({ onClose, onBooked }) {
           <div className="done">
             <div className="tick">✓</div>
             <p>{booking?.message || 'Interview booked! Check your email.'}</p>
-            <a href="https://cal.com/aryan-pandey-wpce3h/30min"
+            <a href={`https://cal.com/${process.env.REACT_APP_CALCOM_USERNAME || 'aryan-pandey-wpce3h'}/30min`}
                target="_blank" rel="noreferrer" className="cal-a">
               View on Cal.com →
             </a>
