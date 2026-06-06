@@ -3,6 +3,7 @@ import re
 import json
 import time
 import collections
+import httpx
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -39,6 +40,25 @@ rag_engine = RAGEngine()
 calendar_manager = CalendarManager()
 # Share the already-loaded RAGEngine instance — avoids loading the model twice
 voice_handler = VoiceHandler(rag=rag_engine)
+
+
+@app.on_event("startup")
+async def start_keepalive():
+    """Ping /ping every 5 minutes so Railway never idles the container."""
+    import asyncio
+    backend_url = os.getenv("BACKEND_URL", "")
+    if not backend_url:
+        return
+    async def _loop():
+        await asyncio.sleep(60)          # wait 1 min after startup
+        while True:
+            try:
+                async with httpx.AsyncClient(timeout=10) as cl:
+                    await cl.get(f"{backend_url}/ping")
+            except Exception:
+                pass
+            await asyncio.sleep(300)     # every 5 minutes
+    asyncio.create_task(_loop())
 
 # ── Rate limiter (10 requests / 60s per IP) ───────────────────────────────────
 _RATE_WINDOW  = 60
@@ -201,6 +221,12 @@ async def health():
         "chroma_exists": chroma_path.exists(),
         "chroma_path": str(chroma_path)
     }
+
+
+@app.get("/ping")
+async def ping():
+    """Lightweight keepalive endpoint — called every 5 min to prevent Railway sleep."""
+    return {"ok": True}
 
 
 @app.post("/chat", response_model=ChatResponse)

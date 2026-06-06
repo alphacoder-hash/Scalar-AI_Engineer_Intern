@@ -13,3 +13,4 @@ requests>=2.31.0
 numpy>=1.26.0
 pytest>=7.4.0
 pytest-asyncio>=0.23.5
+reportlab>=4.0.0
