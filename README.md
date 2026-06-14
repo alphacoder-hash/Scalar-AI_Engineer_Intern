@@ -1,4 +1,4 @@
-# Sam — AI Persona for Vaibhav Pandey (Scaler AI Engineer Assignment)
+# Sam — AI Persona for Vaibhav Pandey
 
 Live AI persona that answers calls and chat, answers questions about Vaibhav's background from his real resume and GitHub repos, and books interviews autonomously on Cal.com — no human in the loop.
 
